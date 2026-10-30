@@ -1,0 +1,64 @@
+name: custom-build
+
+on:
+  push:
+    branches: [ custom-build ]
+    tags: [ 'v*-custom.*' ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-versions:
+          - '8.3'
+          - '8.4'
+          - '8.5'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
+        with:
+          php-version: ${{ matrix.php-versions }}
+          extensions: mbstring, intl
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Run test suite
+        run: vendor/bin/phpunit --order-by random
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          # Full history to list the commits added on top of custom
+          fetch-depth: 0
+
+      # Lowest PHP version supported by Deployer: bundled dependencies run everywhere
+      - name: Setup PHP
+        uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
+        with:
+          php-version: '8.3'
+
+      - name: Build phar
+        run: php -d phar.readonly=0 bin/build -v"${GITHUB_REF_NAME#v}"
+
+      - name: Create release
+        run: |
+          git log --format='- %s' origin/custom..HEAD > notes.md
+          gh release create "$GITHUB_REF_NAME" deployer.phar --title "$GITHUB_REF_NAME" --notes-file notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
